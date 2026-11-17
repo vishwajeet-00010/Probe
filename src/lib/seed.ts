@@ -1,3 +1,4 @@
+/** Test fixtures and the empty-state skeleton. No demo data ships at runtime. */
 import type { State } from "@/types/domain";
 export function emptyState(
   id: string,
@@ -17,11 +18,13 @@ export function emptyState(
       timezone: "Europe/London",
       onboardingStep: 0,
       onboarding: {},
-      demo: false,
+      ownerId: uid,
+      createdAt: now,
       plan: "Free",
       trialEndsAt: new Date(Date.now() + 14 * 86400000).toISOString(),
     },
     sites: [{ id: "main", organizationId: id, name: "Main site", address: "" }],
+    invitations: [],
     memberships: [
       {
         id: uid,
@@ -47,7 +50,6 @@ export function emptyState(
     shareLinks: [],
     notifications: [],
     auditEvents: [],
-    subscriptions: [],
     notificationPreferences: [],
   };
 }
@@ -58,7 +60,6 @@ export function seedState(id: string): State {
     "demo-owner",
     "alex@example.test",
   );
-  s.organization.demo = true;
   s.organization.onboardingStep = 10;
   s.organization.address = "24 Main Street, Bristol";
   s.memberships[0].name = "Alex Morgan";
@@ -126,6 +127,7 @@ export function seedState(id: string): State {
         equipmentId: equipment.id,
         templateVersionId: "",
         supplierId: "",
+        dueItemId: "",
         type: "Temperature",
         label: equipment.name,
         value: `${n} °C`,
@@ -162,6 +164,7 @@ export function seedState(id: string): State {
         {
           at: bad.serverTimestamp,
           actor: "Mia Chen",
+          actorId: "mia",
           note: bad.notes,
           status: "Open",
         },
@@ -276,12 +279,13 @@ export function seedState(id: string): State {
       id: "audit-seed",
       organizationId: id,
       actor: "Probe",
+      actorId: "system",
       at: new Date().toISOString(),
-      action: "demo.created",
+      action: "fixture.created",
       entity: id,
       oldValue: "",
-      newValue: "Demo workspace created",
-      metadata: { demo: "true" },
+      newValue: "Test fixture created",
+      metadata: {},
     },
   ];
   return s;

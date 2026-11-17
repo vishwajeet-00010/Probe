@@ -1,12 +1,23 @@
 "use client";
-import { getApps, initializeApp } from "firebase/app";
+import { getApps, initializeApp, type FirebaseApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
-export function clientAuth() {
-  if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY)
+import {
+  getFirestore,
+  initializeFirestore,
+  type Firestore,
+} from "firebase/firestore";
+
+/** Public web configuration (safe to ship). Security comes from firestore.rules. */
+export function firebaseConfigured() {
+  return Boolean(process.env.NEXT_PUBLIC_FIREBASE_API_KEY);
+}
+
+function app(): FirebaseApp {
+  if (!firebaseConfigured())
     throw new Error(
-      "Firebase sign-in is not configured. You can explore the local demo.",
+      "Firebase is not configured. Add the NEXT_PUBLIC_FIREBASE_* values to .env.local.",
     );
-  const app =
+  return (
     getApps()[0] ??
     initializeApp({
       apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -15,6 +26,18 @@ export function clientAuth() {
       storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
       appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
       messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-    });
-  return getAuth(app);
+    })
+  );
+}
+
+let db: Firestore | null = null;
+export const clientAuth = () => getAuth(app());
+export function clientDb() {
+  if (db) return db;
+  try {
+    db = initializeFirestore(app(), { ignoreUndefinedProperties: true });
+  } catch {
+    db = getFirestore(app());
+  }
+  return db;
 }

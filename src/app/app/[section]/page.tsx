@@ -27,6 +27,10 @@ const pages: Record<string, React.ComponentType> = {
   onboarding: Onboarding,
   settings: SettingsPage,
 };
+export const dynamicParams = false;
+export function generateStaticParams() {
+  return Object.keys(pages).map((section) => ({ section }));
+}
 export default async function Page({
   params,
 }: {

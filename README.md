@@ -1,29 +1,40 @@
 # Probe Web
 
-Food-safety records and inspection reporting for independent food businesses. Next.js, TypeScript, Firebase architecture and a working isolated local demo.
+Food-safety records and inspection reporting for independent food businesses.
+
+**Firebase-only architecture — no application server.** The site is a Next.js static
+export served by Firebase Hosting; the browser (and the Probe Flutter app) talk to
+Firebase Auth and Cloud Firestore directly. `firestore.rules` is the security boundary.
+Billing is RevenueCat (Web Billing + mobile in-app purchases). Everything fits the free
+Firebase **Spark** plan.
 
 ## Quick start
 
 ```powershell
-npm ci
-node scripts/setup-demo.mjs
+npm install
+copy .env.example .env.local   # then fill in your Firebase web config
 npm run dev
 ```
 
-Open [local Probe](http://localhost:3000/login) and choose **Explore with demo data**. No account or external credentials are required for the demo. Setup never overwrites an existing `.env.local`.
+You need a Firebase project (see [deployment](docs/DEPLOYMENT.md)); there is no offline demo mode.
 
 ## Commands
 
 ```powershell
 npm run lint
 npm run typecheck
-npm test
-npm run build
-npm start
-# App running, Chrome installed:
+npm test               # unit tests (domain rules, Firestore diff/codec, PDFs)
+npm run build          # static export to out/
+npm run deploy         # build + firebase deploy (hosting, rules, indexes)
+# Static site running (npm run build && npx serve out, or npm run preview):
 npx playwright test
 ```
 
-Node 22+ required. Webpack is selected for this Windows host. Real Firebase/Stripe usage requires operator configuration; email, push, attachments and workers are not activated.
+Node 22+ required.
 
-See [PROJECT_IMPLEMENTATION.md](PROJECT_IMPLEMENTATION.md) for the authoritative feature inventory, routes, security and setup; [CHANGELOG.md](CHANGELOG.md) for milestones; and [deployment notes](docs/DEPLOYMENT.md) before staging or launch.
+## Docs
+
+- [docs/FIREBASE_SCHEMA.md](docs/FIREBASE_SCHEMA.md) — collections, fields, write recipes, RevenueCat conventions (shared with the Flutter app)
+- [firestore.rules](firestore.rules) — tenant, role and record-integrity enforcement
+- [PROJECT_IMPLEMENTATION.md](PROJECT_IMPLEMENTATION.md) — feature inventory, security model, known gaps
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — Firebase, RevenueCat and hosting setup

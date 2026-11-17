@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.0 — 2026-11-17 (Firebase-only)
+
+- Removed the Next.js server: all API routes, server sessions, Firebase Admin, Stripe and the
+  file-based demo. The site is now a static export for Firebase Hosting (free Spark plan).
+- Browser talks to Firestore directly; `firestore.rules` now enforces tenancy, roles, Staff site
+  scope, immutable entries with append-only amendments, out-of-range ⇒ issue integrity, issue
+  transitions, append-only audit log and expiring/revocable inspector links.
+- Shared schema for web and the Flutter app in `docs/FIREBASE_SCHEMA.md`.
+- Signup creates the organization in one atomic batch; invitations are matched to the invitee's
+  verified email (no email is sent).
+- Real-time Firestore listeners replace `/api/state`; windows are ordered by time, fixing the old
+  random-250 window for issues, notifications, reports and template versions.
+- Reports, PDFs, CSV export and the free printable generator are generated in the browser.
+- Inspector links moved to `/inspect#token` (token never reaches server logs).
+- Billing via RevenueCat Web Billing (`appUserId = organizationId`, entitlements `pro`/`group`).
+
 ## 0.1.0 — 2026-11-13
 
 - Established Next.js/React/TypeScript application with green design tokens, responsive navigation, dark mode, dialogs and forms.

@@ -19,8 +19,9 @@ export function Team() {
         </button>
       </Heading>
       <div className="notice" style={{ marginBottom: 20 }}>
-        Invitation records are saved here. Email delivery and invitation
-        acceptance are not yet activated.
+        Probe doesn’t send invitation emails. Ask the person to sign up with the
+        invited email address (web or the Probe app); after verifying it they
+        can join your team.
       </div>
       <section className="card table-wrap">
         <table>
@@ -61,26 +62,53 @@ export function Team() {
                 </td>
                 <td>
                   {m.role !== "Owner" &&
-                    (actor.role === "Owner" || m.role === "Staff") &&
-                    (m.status === "Invited" ? (
+                    (actor.role === "Owner" || m.role === "Staff") && (
+                      <button className="btn" onClick={() => setEdit(m.id)}>
+                        Manage
+                      </button>
+                    )}
+                </td>
+              </tr>
+            ))}
+            {state.invitations
+              .filter((i) => i.status === "Invited")
+              .map((i) => (
+                <tr key={i.id}>
+                  <td>
+                    <div className="row">
+                      <Avatar name={i.name} />
+                      <div>
+                        <strong>{i.name}</strong>
+                        <p className="muted">{i.email}</p>
+                      </div>
+                    </div>
+                  </td>
+                  <td>{i.role}</td>
+                  <td>
+                    {i.siteIds
+                      .map((id) => state.sites.find((s) => s.id === id)?.name)
+                      .join(", ")}
+                  </td>
+                  <td>
+                    <Badge status="Invited" />
+                  </td>
+                  <td>—</td>
+                  <td>
+                    {(actor.role === "Owner" || i.role === "Staff") && (
                       <button
                         className="btn danger"
                         onClick={() =>
-                          run({ action: "team.revoke", id: m.id }).catch(
+                          run({ action: "team.revoke", id: i.id }).catch(
                             () => {},
                           )
                         }
                       >
                         Revoke invite
                       </button>
-                    ) : (
-                      <button className="btn" onClick={() => setEdit(m.id)}>
-                        Manage
-                      </button>
-                    ))}
-                </td>
-              </tr>
-            ))}
+                    )}
+                  </td>
+                </tr>
+              ))}
           </tbody>
         </table>
       </section>

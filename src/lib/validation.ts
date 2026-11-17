@@ -113,7 +113,7 @@ export const commandSchema = z.discriminatedUnion("action", [
     role: z.enum(["Manager", "Staff"]),
     status: z.enum(["Active", "Inactive"]),
   }),
-  z.object({ action: z.literal("team.revoke"), id }),
+  z.object({ action: z.literal("team.revoke"), id: z.email() }),
   z.object({ action: z.literal("notification.read"), id }),
   z.object({
     action: z.literal("notification.preferences"),
@@ -154,7 +154,6 @@ export const commandSchema = z.discriminatedUnion("action", [
     action: z.literal("account.delete-request"),
     confirmation: z.literal("DELETE"),
   }),
-  z.object({ action: z.literal("demo.clear") }),
 ]);
 export type Command = z.infer<typeof commandSchema>;
 export const reportSchema = z

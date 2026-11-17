@@ -23,14 +23,12 @@ export function ActionForm({
   fields,
   build,
   onClose,
-  path,
   submitLabel = "Save changes",
 }: {
   title: string;
   fields: FormField[];
   build: (values: Record<string, string>) => unknown;
   onClose: () => void;
-  path?: string;
   submitLabel?: string;
 }) {
   const { run, busy } = useApp(),
@@ -45,7 +43,7 @@ export function ActionForm({
             new FormData(e.currentTarget).entries(),
           ) as Record<string, string>;
           try {
-            await run(build(values), path);
+            await run(build(values));
             onClose();
           } catch (e) {
             setError(e instanceof Error ? e.message : "Unable to save.");
