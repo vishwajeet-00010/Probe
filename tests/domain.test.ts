@@ -22,8 +22,8 @@ const owner: Actor = {
   uid: "demo-owner",
   organizationId: "org-a",
   name: "Alex Morgan",
+  email: "alex@example.test",
   role: "Owner",
-  demo: true,
   admin: false,
 };
 const staff: Actor = { ...owner, role: "Staff" };
@@ -259,7 +259,7 @@ describe("share link boundaries", () => {
     id: "link",
     organizationId: "org-a",
     reportId: "report-a",
-    tokenHash: "hash",
+    createdAt: "2026-11-01T00:00:00Z",
     expiresAt: "2026-12-01T00:00:00Z",
     revoked: false,
     accesses: 0,
@@ -299,5 +299,63 @@ describe("plan integrity", () => {
     expect(s.entries).toHaveLength(0);
     expect(s.memberships[0].role).toBe("Owner");
     expect(s.organization.onboardingStep).toBe(0);
+  });
+});
+describe("team invitations", () => {
+  it("stores invitations by lower-cased email, not as memberships", () => {
+    const s = seedState("org-a");
+    const members = s.memberships.length;
+    applyCommand(s, owner, {
+      action: "team.invite",
+      name: "Sam Lee",
+      email: "Sam@Example.test",
+      role: "Staff",
+      siteIds: ["main"],
+    });
+    expect(s.memberships).toHaveLength(members);
+    expect(s.invitations[0]).toMatchObject({
+      id: "sam@example.test",
+      status: "Invited",
+      invitedBy: owner.uid,
+    });
+  });
+  it("prevents managers inviting managers", () =>
+    expect(() =>
+      applyCommand(seedState("org-a"), manager, {
+        action: "team.invite",
+        name: "Pat",
+        email: "pat@example.test",
+        role: "Manager",
+        siteIds: ["main"],
+      }),
+    ).toThrow());
+  it("revokes a pending invitation and allows a re-invite", () => {
+    const s = seedState("org-a");
+    const invite = {
+      action: "team.invite" as const,
+      name: "Sam Lee",
+      email: "sam@example.test",
+      role: "Staff" as const,
+      siteIds: ["main"],
+    };
+    applyCommand(s, owner, invite);
+    expect(() => applyCommand(s, owner, invite)).toThrow();
+    applyCommand(s, owner, { action: "team.revoke", id: "sam@example.test" });
+    expect(s.invitations[0].status).toBe("Revoked");
+    applyCommand(s, owner, invite);
+    expect(s.invitations).toHaveLength(1);
+    expect(s.invitations[0].status).toBe("Invited");
+  });
+  it("records the acting user id on audit events", () => {
+    const s = seedState("org-a");
+    applyCommand(s, owner, {
+      action: "supplier.create",
+      name: "New Supplier",
+      email: "",
+      phone: "",
+      categories: "Dry goods",
+      notes: "",
+    });
+    expect(s.auditEvents[0].actorId).toBe(owner.uid);
   });
 });

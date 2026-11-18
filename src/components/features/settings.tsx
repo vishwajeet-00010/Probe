@@ -6,8 +6,10 @@ import { Check } from "lucide-react";
 import { Field } from "../ui";
 import { ActionForm } from "../forms";
 import { Heading } from "./heading";
+import { exportEntriesCsv } from "@/lib/data";
+import { billingConfigured, managementUrl, purchasePlan } from "@/lib/billing";
 export function SettingsPage({ section = "business" }: { section?: string }) {
-  const { state, actor, run, busy } = useApp(),
+  const { state, actor, run, act, busy } = useApp(),
     [error, setError] = useState(""),
     [limits, setLimits] = useState<string | null>(null),
     [deleting, setDeleting] = useState(false);
@@ -101,20 +103,20 @@ export function SettingsPage({ section = "business" }: { section?: string }) {
               or cancellation.
             </p>
             <div className="row wrap">
-              <a href="/api/export" download className="btn">
+              <button
+                className="btn"
+                disabled={busy}
+                onClick={() =>
+                  act(() => exportEntriesCsv(actor), "Export ready.").catch(
+                    () => {},
+                  )
+                }
+              >
                 Export all records
-              </a>
+              </button>
               <Link href="/app/onboarding" className="btn">
                 Resume setup
               </Link>
-              {actor.demo && (
-                <button
-                  className="btn"
-                  onClick={() => run({ action: "demo.clear" }).catch(() => {})}
-                >
-                  Remove sample activity
-                </button>
-              )}
               {actor.role === "Owner" && (
                 <button
                   className="btn danger"
@@ -286,7 +288,7 @@ export function SettingsPage({ section = "business" }: { section?: string }) {
   );
 }
 function Billing() {
-  const { state, actor, run, busy } = useApp();
+  const { state, actor, act, busy } = useApp();
   return (
     <div className="stack">
       <div className="notice">
@@ -342,15 +344,19 @@ function Billing() {
               <button
                 className="btn primary"
                 disabled={busy || actor.role !== "Owner"}
-                onClick={async () => {
-                  try {
-                    const d = await run(
-                      { action: "checkout", plan: p.name },
-                      "/api/billing",
-                    );
-                    window.location.assign(d.url);
-                  } catch {}
-                }}
+                onClick={() =>
+                  act(
+                    () =>
+                      purchasePlan(
+                        actor.organizationId,
+                        p.name as "Pro" | "Group",
+                        actor.email,
+                      ).then((done) => {
+                        if (done) window.location.reload();
+                      }),
+                    "",
+                  ).catch(() => {})
+                }
               >
                 Choose {p.name}
               </button>
@@ -361,18 +367,21 @@ function Billing() {
       <button
         className="btn"
         disabled={actor.role !== "Owner"}
-        onClick={async () => {
-          try {
-            const d = await run({ action: "portal" }, "/api/billing");
-            window.location.assign(d.url);
-          } catch {}
-        }}
+        onClick={() =>
+          act(async () => {
+            const url = await managementUrl(actor.organizationId);
+            if (!url) throw new Error("No active subscription to manage yet.");
+            window.location.assign(url);
+          }, "").catch(() => {})
+        }
       >
         Manage subscription & invoices
       </button>
       <p className="muted">
-        Checkout requires configured Stripe prices. Historical records, reports
-        and export are never locked on downgrade.
+        {billingConfigured()
+          ? "Payments are handled securely by RevenueCat. Subscriptions bought in the Probe mobile app apply here too."
+          : "Billing is not configured for this environment."}{" "}
+        Historical records, reports and export are never locked on downgrade.
       </p>
     </div>
   );

@@ -5,6 +5,13 @@ import { Plus, Download, Share2, FileCheck2 } from "lucide-react";
 import type { Report } from "@/types/domain";
 import { Badge, Empty, Field, Modal } from "../ui";
 import { Heading } from "./heading";
+import {
+  createShare,
+  downloadReportPdf,
+  exportEntriesCsv,
+  generateReport,
+  revokeShare,
+} from "@/lib/data";
 export const reportSections = [
   "Temperature records",
   "Checklist completion",
@@ -14,7 +21,7 @@ export const reportSections = [
   "Sign-offs",
 ];
 export function Reports() {
-  const { state, site, run, busy } = useApp();
+  const { state, site, actor, act, busy } = useApp();
   const [builder, setBuilder] = useState(false),
     [share, setShare] = useState<Report | null>(null),
     [url, setUrl] = useState(""),
@@ -25,10 +32,16 @@ export function Reports() {
         title="Reports"
         description="Your daily records, ready for a closer look."
       >
-        <a className="btn" href="/api/export" download>
+        <button
+          className="btn"
+          disabled={busy}
+          onClick={() =>
+            act(() => exportEntriesCsv(actor), "Export ready.").catch(() => {})
+          }
+        >
           <Download size={15} />
           Full CSV export
-        </a>
+        </button>
         <button className="btn primary" onClick={() => setBuilder(true)}>
           <Plus size={16} />
           Generate inspection pack
@@ -87,10 +100,18 @@ export function Reports() {
                   </td>
                   <td>
                     <div className="row">
-                      <a className="btn" href={`/api/reports/${r.id}`}>
+                      <button
+                        className="btn"
+                        disabled={busy}
+                        onClick={() =>
+                          act(() => downloadReportPdf(actor, r.id), "").catch(
+                            () => {},
+                          )
+                        }
+                      >
                         <Download size={13} />
                         PDF
-                      </a>
+                      </button>
                       <button
                         className="btn"
                         onClick={() => {
@@ -137,7 +158,9 @@ export function Reports() {
                 <button
                   className="btn danger"
                   onClick={() =>
-                    run({ id: l.id }, "/api/shares", "DELETE").catch(() => {})
+                    act(() => revokeShare(actor, l.id), "Link revoked.").catch(
+                      () => {},
+                    )
                   }
                 >
                   Revoke link
@@ -158,11 +181,13 @@ export function Reports() {
               e.preventDefault();
               const f = new FormData(e.currentTarget);
               try {
-                const data = await run(
-                  { reportId: share.id, days: Number(f.get("days")) },
-                  "/api/shares",
+                const days = Number(f.get("days")) as 1 | 7 | 30;
+                setUrl(
+                  await act(
+                    () => createShare(actor, state, share.id, days),
+                    "Link created.",
+                  ),
                 );
-                setUrl(data.url);
               } catch (e) {
                 setError(e instanceof Error ? e.message : "Unable to share.");
               }
@@ -210,7 +235,7 @@ function ReportBuilder({
   site: string;
   onClose: () => void;
 }) {
-  const { state, run, busy } = useApp(),
+  const { state, actor, act, busy } = useApp(),
     [error, setError] = useState(""),
     [start, setStart] = useState(
       new Date(new Date().getTime() - 90 * 86400000).toISOString().slice(0, 10),
@@ -224,15 +249,16 @@ function ReportBuilder({
         onSubmit={async (e) => {
           e.preventDefault();
           try {
-            await run(
-              {
-                name: "Inspection pack",
-                start,
-                end,
-                siteIds: [site],
-                sections,
-              },
-              "/api/reports",
+            await act(
+              () =>
+                generateReport(actor, state, {
+                  name: "Inspection pack",
+                  start,
+                  end,
+                  siteIds: [site],
+                  sections,
+                }),
+              "Report generated.",
             );
             onClose();
           } catch (e) {

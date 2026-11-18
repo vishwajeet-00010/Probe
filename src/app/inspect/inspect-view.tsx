@@ -1,17 +1,25 @@
-import { inspectReport } from "@/services/reports";
+"use client";
+import { useEffect, useState } from "react";
+import { inspectReport } from "@/lib/data";
+import { firebaseConfigured } from "@/lib/firebase/client";
 import { Brand, Badge } from "@/components/ui";
-export const dynamic = "force-dynamic";
-export const metadata = {
-  title: "Read-only inspection report",
-  robots: { index: false, follow: false },
-};
-export default async function Page({
-  params,
-}: {
-  params: Promise<{ token: string }>;
-}) {
-  const { token } = await params;
-  const report = await inspectReport(token).catch(() => null);
+import type { Report } from "@/types/domain";
+
+export function InspectView() {
+  const [report, setReport] = useState<Report | null | "loading">("loading");
+  useEffect(() => {
+    const token = firebaseConfigured() ? window.location.hash.slice(1) : "";
+    inspectReport(token).then(setReport);
+  }, []);
+  if (report === "loading")
+    return (
+      <main className="marketing-main" id="main">
+        <Brand />
+        <p className="muted" style={{ marginTop: 40 }}>
+          Loading inspection report…
+        </p>
+      </main>
+    );
   if (!report)
     return (
       <main className="marketing-main" id="main">
@@ -41,8 +49,11 @@ export default async function Page({
           Period: {report.start} — {report.end}
         </p>
         <p className="muted">
-          Generated {new Date(report.generatedAt).toLocaleString("en-GB")} by{" "}
-          {report.generatedBy}
+          Generated{" "}
+          {new Date(report.generatedAt).toLocaleString("en-GB", {
+            timeZone: "UTC",
+          })}{" "}
+          UTC by {report.generatedBy}
         </p>
         <p className="muted">Report ID: {report.id}</p>
         <div className="row" style={{ margin: "25px 0" }}>
@@ -54,7 +65,7 @@ export default async function Page({
           <table>
             <thead>
               <tr>
-                <th>Time</th>
+                <th>Time (UTC)</th>
                 <th>Check</th>
                 <th>Original value</th>
                 <th>Status</th>

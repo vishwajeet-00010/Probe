@@ -1,22 +1,9 @@
 import type { NextConfig } from "next";
+// Static export for Firebase Hosting (free Spark plan): no Node server runs.
+// Security headers are set in firebase.json because static hosting ignores headers().
 const config: NextConfig = {
+  output: "export",
   poweredByHeader: false,
-  serverExternalPackages: ["firebase-admin"],
-  async headers() {
-    return [
-      {
-        source: "/(.*)",
-        headers: [
-          { key: "X-Content-Type-Options", value: "nosniff" },
-          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-          { key: "X-Frame-Options", value: "DENY" },
-          {
-            key: "Permissions-Policy",
-            value: "camera=(), microphone=(), geolocation=()",
-          },
-        ],
-      },
-    ];
-  },
+  images: { unoptimized: true },
 };
 export default config;

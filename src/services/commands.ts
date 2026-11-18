@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+const randomUUID = () => globalThis.crypto.randomUUID();
 import type { Actor, State, Entry } from "@/types/domain";
 import type { Command } from "@/lib/validation";
 import {
@@ -27,11 +27,13 @@ export function audit(
     id: randomUUID(),
     organizationId: a.organizationId,
     actor: a.name,
+    actorId: a.uid,
     at: new Date().toISOString(),
     action,
     entity,
-    oldValue: JSON.stringify(oldValue),
-    newValue: JSON.stringify(newValue),
+    // Rules cap audit values at 20,000 characters.
+    oldValue: String(JSON.stringify(oldValue)).slice(0, 20000),
+    newValue: String(JSON.stringify(newValue)).slice(0, 20000),
     metadata: {},
   });
 }
@@ -117,6 +119,7 @@ export function applyCommand(s: State, a: Actor, c: Command) {
         equipmentId: c.equipmentId,
         templateVersionId: version?.id ?? due?.templateVersionId ?? "",
         supplierId: c.supplierId ?? "",
+        dueItemId: c.dueItemId ?? "",
         type: c.type,
         label: equipment?.name ?? version?.name ?? due?.title ?? c.type,
         value: c.type === "Temperature" ? `${c.value} °C` : c.value,
@@ -160,6 +163,7 @@ export function applyCommand(s: State, a: Actor, c: Command) {
       e.amendments.push({
         id,
         actor: a.name,
+        actorId: a.uid,
         at: now,
         reason: c.reason,
         value: c.value,
@@ -192,6 +196,7 @@ export function applyCommand(s: State, a: Actor, c: Command) {
           {
             at: now,
             actor: a.name,
+            actorId: a.uid,
             note: "Issue opened manually.",
             status: "Open",
           },
@@ -207,6 +212,7 @@ export function applyCommand(s: State, a: Actor, c: Command) {
       issue.timeline.push({
         at: now,
         actor: a.name,
+        actorId: a.uid,
         note: c.note,
         status: c.status,
       });
@@ -252,6 +258,7 @@ export function applyCommand(s: State, a: Actor, c: Command) {
         createdAt: now,
       });
       template.name = c.name;
+      template.category = c.category;
       template.currentVersionId = vid;
       if (!c.id) s.templates.push(template);
       break;
@@ -269,36 +276,36 @@ export function applyCommand(s: State, a: Actor, c: Command) {
         assignedTo: c.assignedTo,
       });
       break;
-    case "team.invite":
+    case "team.invite": {
       authorize(a, "team");
       checkCapacity(s, "memberships");
       if (a.role === "Manager" && c.role !== "Staff")
         throw new DomainError("Managers can invite Staff only.", 403);
       for (const site of c.siteIds) tenantRecord(a, s.sites, site);
-      if (
-        s.memberships.some(
-          (m) =>
-            m.email.toLowerCase() === c.email.toLowerCase() &&
-            m.status !== "Inactive",
-        )
-      )
+      const email = c.email.toLowerCase();
+      if (s.memberships.some((m) => m.email.toLowerCase() === email))
         throw new DomainError("This email is already on your team.", 409);
-      s.memberships.push({
-        ...base,
-        userId: "",
+      const existing = s.invitations.find((i) => i.id === email);
+      if (existing && existing.status !== "Revoked")
+        throw new DomainError("This email already has an invitation.", 409);
+      const invitation = {
+        id: email,
+        organizationId: a.organizationId,
+        email,
         name: c.name,
-        email: c.email.toLowerCase(),
         role: c.role,
         siteIds: c.siteIds,
-        status: "Invited",
-        lastActive: now,
-      });
+        status: "Invited" as const,
+        invitedBy: a.uid,
+        createdAt: now,
+      };
+      if (existing) Object.assign(existing, invitation);
+      else s.invitations.push(invitation);
       break;
+    }
     case "team.update": {
       const m = tenantRecord(a, s.memberships, c.id);
       mayChangeRole(a, m.role, c.role);
-      if (!m.userId && c.status === "Active")
-        throw new DomainError("Invitation must be accepted before activation.");
       const old = { role: m.role, status: m.status };
       m.role = c.role;
       m.status = c.status;
@@ -307,11 +314,11 @@ export function applyCommand(s: State, a: Actor, c: Command) {
     }
     case "team.revoke": {
       authorize(a, "team");
-      const m = tenantRecord(a, s.memberships, c.id);
-      mayChangeRole(a, m.role, m.role);
-      if (m.status !== "Invited")
+      const invite = tenantRecord(a, s.invitations, c.id);
+      mayChangeRole(a, invite.role, invite.role);
+      if (invite.status !== "Invited")
         throw new DomainError("Only pending invitations can be revoked.");
-      m.status = "Inactive";
+      invite.status = "Revoked";
       break;
     }
     case "notification.read": {
@@ -379,16 +386,6 @@ export function applyCommand(s: State, a: Actor, c: Command) {
     case "account.delete-request":
       authorize(a, "delete");
       s.organization.deletionRequestedAt = now;
-      break;
-    case "demo.clear":
-      authorize(a, "settings");
-      if (!a.demo) throw new DomainError("Only demo data may be cleared.", 403);
-      s.entries = [];
-      s.issues = [];
-      s.dueItems = [];
-      s.notifications = [];
-      s.reports = [];
-      s.shareLinks = [];
       break;
   }
   audit(

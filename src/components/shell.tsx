@@ -1,4 +1,6 @@
 "use client";
+import { signOut } from "firebase/auth";
+import { clientAuth } from "@/lib/firebase/client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
@@ -131,9 +133,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
               className="icon-btn"
               aria-label="Sign out"
               onClick={async () => {
-                await fetch("/api/session", { method: "DELETE" });
-                router.push("/login");
-                router.refresh();
+                await signOut(clientAuth());
+                router.replace("/login");
               }}
             >
               <LogOut size={16} />
@@ -213,12 +214,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <Avatar name={actor.name} />
           </div>
         </header>
-        {actor.demo && (
-          <div className="demo-strip">
-            <span>DEMO WORKSPACE · Sample records, safe to explore</span>
-            <Link href="/signup">Set up your business →</Link>
-          </div>
-        )}
         <main id="main" className="content">
           {children}
           <p className="muted" style={{ fontSize: 10, marginTop: 24 }}>

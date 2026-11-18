@@ -5,23 +5,23 @@
   "scripts": {
     "dev": "next dev --webpack",
     "build": "next build --webpack",
-    "start": "next start",
+    "preview": "firebase emulators:start --only hosting",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "deploy": "npm run build && firebase deploy --only hosting,firestore",
+    "deploy:rules": "firebase deploy --only firestore",
     "format": "prettier --write src tests docs *.md *.json *.mjs *.ts"
   },
   "dependencies": {
+    "@revenuecat/purchases-js": "1.73.2",
     "firebase": "13.3.0",
-    "firebase-admin": "14.5.1",
     "lucide-react": "1.72.0",
     "next": "16.4.6",
     "pdf-lib": "1.17.1",
     "react": "19.3.1",
     "react-dom": "19.3.1",
-    "server-only": "0.0.1",
-    "stripe": "23.1.0",
     "zod": "4.6.7"
   },
   "devDependencies": {

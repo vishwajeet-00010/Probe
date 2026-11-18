@@ -81,9 +81,9 @@ export default async function Page({
         </div>
         <a
           className="btn primary"
-          href={`/api/generator?business=Your%20business&equipment=${encodeURIComponent(t.title)}`}
+          href={`/generator?equipment=${encodeURIComponent(t.title)}`}
         >
-          Download printable PDF
+          Create printable PDF
         </a>{" "}
         <Link className="btn" href="/generator">
           Customise your log

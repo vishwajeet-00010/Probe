@@ -1,4 +1,3 @@
-import "server-only";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { Entry, Report } from "@/types/domain";
 export function csvCell(value: unknown) {

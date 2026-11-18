@@ -8,8 +8,9 @@ import type { Entry } from "@/types/domain";
 import { Avatar, Badge, Empty, Modal } from "../ui";
 import { ActionForm, CaptureForm } from "../forms";
 import { Heading } from "./heading";
+import { entriesPage, exportEntriesCsv } from "@/lib/data";
 export function Logs() {
-  const { state, site, search, setSearch, toast } = useApp();
+  const { state, site, search, setSearch, toast, actor, act, busy } = useApp();
   const [type, setType] = useState("All types"),
     [status, setStatus] = useState("All statuses"),
     [equipment, setEquipment] = useState(""),
@@ -25,12 +26,11 @@ export function Logs() {
     [error, setError] = useState("");
   useEffect(() => {
     let active = true;
-    fetch(
-      `/api/entries?${new URLSearchParams({ ...(start ? { start: `${start}T00:00:00.000Z` } : {}), ...(end ? { end: `${end}T23:59:59.999Z` } : {}) })}`,
-    )
-      .then(async (r) => {
-        const data = await r.json();
-        if (!r.ok) throw new Error(data.error);
+    entriesPage(actor, {
+      start: start ? `${start}T00:00:00.000Z` : undefined,
+      end: end ? `${end}T23:59:59.999Z` : undefined,
+    })
+      .then((data) => {
         if (active) {
           setRows(data.items);
           setCursor(data.nextCursor);
@@ -42,7 +42,7 @@ export function Logs() {
     return () => {
       active = false;
     };
-  }, [state.entries, start, end]);
+  }, [actor, state.entries, start, end]);
   const entries = rows.filter(
     (e) =>
       e.siteId === site &&
@@ -63,10 +63,16 @@ export function Logs() {
         title="Logs"
         description="Every check, every reading. A clear, unaltered record."
       >
-        <a className="btn" href="/api/export" download>
+        <button
+          className="btn"
+          disabled={busy}
+          onClick={() =>
+            act(() => exportEntriesCsv(actor), "Export ready.").catch(() => {})
+          }
+        >
           <Download size={15} />
           Export CSV
-        </a>
+        </button>
         <button className="btn primary" onClick={() => setCapture(true)}>
           <Plus size={15} />
           Add record
@@ -223,14 +229,11 @@ export function Logs() {
               onClick={async () => {
                 setLoading(true);
                 try {
-                  const q = new URLSearchParams({
+                  const p = await entriesPage(actor, {
                     cursor,
-                    ...(start ? { start: `${start}T00:00:00.000Z` } : {}),
-                    ...(end ? { end: `${end}T23:59:59.999Z` } : {}),
+                    start: start ? `${start}T00:00:00.000Z` : undefined,
+                    end: end ? `${end}T23:59:59.999Z` : undefined,
                   });
-                  const r = await fetch(`/api/entries?${q}`);
-                  const p = await r.json();
-                  if (!r.ok) throw new Error(p.error);
                   setRows(p.items);
                   setCursor(p.nextCursor);
                 } catch (e) {

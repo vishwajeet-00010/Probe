@@ -18,30 +18,24 @@ import { Brand, Field } from "./ui";
 export function AuthForm({
   signup = false,
   reset = false,
-  demo = false,
 }: {
   signup?: boolean;
   reset?: boolean;
-  demo?: boolean;
 }) {
   const router = useRouter(),
     [busy, setBusy] = useState(false),
     [message, setMessage] = useState(""),
     [error, setError] = useState("");
-  async function session(user: User, name?: string) {
-    const r = await fetch("/api/session", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        idToken: await user.getIdToken(true),
-        businessName: name,
-      }),
-    });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error);
-    await signOut(clientAuth());
-    router.push(d.redirect);
-    router.refresh();
+  // Firebase keeps the session in the browser; /app resolves the organization.
+  async function session(user: User) {
+    if (!user.emailVerified) {
+      await sendEmailVerification(user).catch(() => {});
+      await signOut(clientAuth());
+      throw new Error(
+        "Verify your email first. We’ve sent you a fresh verification link.",
+      );
+    }
+    router.push("/app/dashboard");
   }
   async function provider(type: "google" | "apple") {
     setBusy(true);
@@ -125,10 +119,7 @@ export function AuthForm({
                     password,
                   );
                   await sendEmailVerification(result.user);
-                  await signOut(auth);
-                  setMessage(
-                    "Account created. Verify your email, then sign in to create your workspace.",
-                  );
+                  router.push("/app/dashboard");
                 } else {
                   const result = await signInWithEmailAndPassword(
                     auth,
@@ -223,45 +214,6 @@ export function AuthForm({
               {signup ? "Sign in" : "Start free"}
             </Link>
           </p>
-          {demo && (
-            <>
-              <div className="divider">TAKE A LOOK AROUND</div>
-              <button
-                className="btn"
-                style={{ width: "100%" }}
-                disabled={busy}
-                onClick={async () => {
-                  setBusy(true);
-                  setError("");
-                  try {
-                    const r = await fetch("/api/session", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ demo: true }),
-                    });
-                    const d = await r.json();
-                    if (!r.ok) throw new Error(d.error);
-                    router.push(d.redirect);
-                    router.refresh();
-                  } catch (e) {
-                    setError(
-                      e instanceof Error ? e.message : "Unable to open demo.",
-                    );
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-              >
-                Explore with demo data →
-              </button>
-              <p
-                className="muted"
-                style={{ textAlign: "center", fontSize: 11, marginTop: 10 }}
-              >
-                A private sample workspace. No account needed.
-              </p>
-            </>
-          )}
         </div>
       </main>
     </div>

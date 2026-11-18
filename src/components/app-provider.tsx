@@ -1,6 +1,8 @@
 "use client";
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { Actor, State } from "@/types/domain";
+import { executeCommand, subscribeState } from "@/lib/data";
+import { entitledPlan, type Plan } from "@/lib/billing";
 type Context = {
   now: number;
   state: State;
@@ -9,73 +11,108 @@ type Context = {
   setSite: (id: string) => void;
   search: string;
   setSearch: (q: string) => void;
-  run: (
-    body: unknown,
-    path?: string,
-    method?: string,
-  ) => Promise<Record<string, string>>;
-  refresh: () => Promise<void>;
+  /** Runs a validated domain command as one atomic Firestore batch. */
+  run: (command: unknown) => Promise<Record<string, string>>;
+  /** Runs any async action with the shared busy state and toast messages. */
+  act: <T>(fn: () => Promise<T>, success?: string) => Promise<T>;
   busy: boolean;
   toast: (s: string) => void;
 };
 const AppContext = createContext<Context | null>(null);
 export function AppProvider({
-  initial,
   actor,
   children,
-  now,
 }: {
-  initial: State;
   actor: Actor;
   children: React.ReactNode;
-  now: number;
 }) {
-  const [state, setState] = useState(initial),
-    [site, setSite] = useState(initial.sites[0]?.id ?? ""),
+  const [state, setState] = useState<State | null>(null),
+    [plan, setPlan] = useState<Plan>("Free"),
+    [error, setError] = useState(""),
+    [site, setSite] = useState(""),
     [search, setSearch] = useState(""),
     [busy, setBusy] = useState(false),
-    [message, setMessage] = useState("");
+    [message, setMessage] = useState(""),
+    [now] = useState(() => Date.now()),
+    latest = useRef<State | null>(null);
+  useEffect(
+    () =>
+      subscribeState(
+        actor,
+        (s) => {
+          latest.current = s;
+          setState(s);
+          setSite((current) => current || s.sites[0]?.id || "");
+        },
+        (e) => setError(e.message),
+      ),
+    [actor],
+  );
+  useEffect(() => {
+    entitledPlan(actor.organizationId)
+      .then(setPlan)
+      .catch(() => setPlan("Free"));
+  }, [actor.organizationId]);
   const toast = (s: string) => {
     setMessage(s);
     setTimeout(() => setMessage(""), 6000);
   };
-  async function refresh() {
-    const res = await fetch("/api/state");
-    if (!res.ok) throw new Error("Unable to refresh records. Please reload.");
-    setState(await res.json());
-  }
-  async function run(body: unknown, path = "/api/commands", method = "POST") {
+  async function act<T>(fn: () => Promise<T>, success = "Changes saved.") {
     setBusy(true);
     try {
-      const res = await fetch(path, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Unable to save changes.");
-      await refresh();
-      toast("Changes saved.");
-      return data;
+      const result = await fn();
+      if (success) toast(success);
+      return result;
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Unable to save changes.");
+      toast(friendly(e));
       throw e;
     } finally {
       setBusy(false);
     }
   }
+  if (error)
+    return (
+      <main id="main" className="marketing-main">
+        <h1>We couldn’t load this workspace</h1>
+        <p className="muted">{error}</p>
+      </main>
+    );
+  if (!state)
+    return (
+      <main id="main" className="marketing-main">
+        <p className="muted">Loading your records…</p>
+      </main>
+    );
+  // The stored plan is always "Free"; the RevenueCat entitlement is overlaid here.
+  const view: State = {
+    ...state,
+    organization: { ...state.organization, plan },
+  };
   return (
     <AppContext.Provider
       value={{
         now,
-        state,
+        state: view,
         actor,
         site,
         setSite,
         search,
         setSearch,
-        run,
-        refresh,
+        run: (command) =>
+          act(() =>
+            executeCommand(
+              actor,
+              {
+                ...(latest.current ?? state),
+                organization: {
+                  ...(latest.current ?? state).organization,
+                  plan,
+                },
+              },
+              command,
+            ),
+          ) as Promise<Record<string, string>>,
+        act,
         busy,
         toast,
       }}
@@ -88,6 +125,14 @@ export function AppProvider({
       )}
     </AppContext.Provider>
   );
+}
+function friendly(e: unknown) {
+  const code = (e as { code?: string })?.code;
+  if (code === "permission-denied")
+    return "You do not have permission to perform this action.";
+  if (code === "unavailable")
+    return "You appear to be offline. Please try again.";
+  return e instanceof Error ? e.message : "Unable to save changes.";
 }
 export function useApp() {
   const ctx = useContext(AppContext);

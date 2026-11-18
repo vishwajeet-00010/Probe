@@ -31,7 +31,11 @@ export function issueFromEntry(
       {
         at: entry.serverTimestamp,
         actor: actor.name,
-        note: entry.notes || "Automatically opened from a failed record.",
+        actorId: actor.uid,
+        note:
+          entry.notes.trim().length >= 3
+            ? entry.notes
+            : "Automatically opened from a failed record.",
         status: "Open",
       },
     ],
@@ -79,7 +83,8 @@ export function checkCapacity(
     resource === "equipment"
       ? state.equipment.filter((e) => !e.archived).length
       : resource === "memberships"
-        ? state.memberships.filter((m) => m.status !== "Inactive").length
+        ? state.memberships.filter((m) => m.status !== "Inactive").length +
+          state.invitations.filter((i) => i.status === "Invited").length
         : state.sites.length;
   if (count >= limits[resource])
     throw new DomainError(

@@ -6,7 +6,7 @@ export default defineConfig({
   timeout: 60000,
   expect: { timeout: 15000 },
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
     channel: "chrome",
     headless: true,
     timezoneId: "America/New_York",

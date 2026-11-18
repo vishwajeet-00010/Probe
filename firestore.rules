@@ -1,9 +1,379 @@
 rules_version = '2';
+// Probe — Firebase-only security model. There is no application server: the web
+// app and the Flutter app write Firestore directly, so THESE RULES are the
+// tenant, role and integrity boundary. Keep docs/FIREBASE_SCHEMA.md in sync.
 service cloud.firestore {
- match /databases/{database}/documents {
-  // All P0 data access goes through the authenticated server. Admin SDK bypasses
-  // these rules and MUST enforce the central tenant/permission boundary.
-  // Mobile clients will use the same API until narrowly scoped rules are tested.
-  match /{document=**} { allow read, write: if false; }
- }
+  match /databases/{database}/documents {
+
+    // ---------- identity ----------
+    function signedIn() { return request.auth != null; }
+    function verified() { return signedIn() && request.auth.token.email_verified == true; }
+    function myEmail() { return request.auth.token.email.lower(); }
+    function admin() { return signedIn() && request.auth.token.internalAdmin == true; }
+
+    // ---------- paths ----------
+    function orgPath(org) { return /databases/$(database)/documents/organizations/$(org); }
+    function memberPath(org, uid) { return /databases/$(database)/documents/organizations/$(org)/memberships/$(uid); }
+    function invitePath(org, email) { return /databases/$(database)/documents/organizations/$(org)/invitations/$(email); }
+    function docPath(org, coll, id) { return /databases/$(database)/documents/organizations/$(org)/$(coll)/$(id); }
+
+    // ---------- membership & roles ----------
+    function me(org) { return get(memberPath(org, request.auth.uid)).data; }
+    function active(org) {
+      return verified() && exists(memberPath(org, request.auth.uid)) && me(org).status == 'Active';
+    }
+    function owner(org) { return active(org) && me(org).role == 'Owner'; }
+    function manager(org) { return active(org) && me(org).role in ['Owner', 'Manager']; }
+    // Owners/Managers are organization-wide; Staff only at assigned sites.
+    function atSite(org, siteId) { return manager(org) || (active(org) && siteId in me(org).siteIds); }
+    // True only inside the signup batch that creates a brand-new organization.
+    function bootstrapping(org) {
+      return verified() && !exists(orgPath(org))
+        && getAfter(orgPath(org)).data.ownerId == request.auth.uid;
+    }
+
+    // ---------- helpers ----------
+    function d() { return request.resource.data; }
+    function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
+    function str(v, max) { return v is string && v.size() <= max; }
+    function txt(v, max) { return v is string && v.size() > 0 && v.size() <= max; }
+    function tenant(org, id) { return d().organizationId == org && d().id == id; }
+
+    // ================= users =================
+    // users/{uid} -> which organization this login belongs to.
+    match /users/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow create, update: if verified() && request.auth.uid == uid
+        && d().keys().hasOnly(['uid', 'organizationId', 'email', 'createdAt'])
+        && d().uid == uid
+        && d().email == myEmail()
+        && getAfter(memberPath(d().organizationId, uid)).data.status == 'Active';
+      allow delete: if false;
+    }
+
+    // Invitee discovers pending invitations with a collection-group query on email.
+    match /{path=**}/invitations/{email} {
+      allow read: if verified() && resource.data.email == myEmail();
+    }
+
+    // Public, read-only inspector view. Doc ID = 256-bit random token (unguessable).
+    match /sharedReports/{token} {
+      allow get: if (resource.data.revoked == false && resource.data.expiresAt > request.time)
+        || owner(resource.data.organizationId);
+      allow list: if owner(resource.data.organizationId);
+      allow create: if token.size() >= 40
+        && owner(d().organizationId)
+        && d().keys().hasOnly(['id', 'organizationId', 'reportId', 'report', 'createdAt', 'expiresAt', 'revoked', 'accesses', 'lastAccessAt', 'createdBy'])
+        && d().id == token
+        && d().report is map
+        && exists(docPath(d().organizationId, 'reports', d().reportId))
+        && d().createdAt == request.time
+        && d().expiresAt is timestamp
+        && d().expiresAt > request.time
+        && d().expiresAt <= request.time + duration.value(31, 'd')
+        && d().revoked == false && d().accesses == 0 && d().lastAccessAt == null
+        && d().createdBy == request.auth.uid;
+      allow update: if
+        // owner revokes
+        (owner(resource.data.organizationId) && changed().hasOnly(['revoked']) && d().revoked == true)
+        // anyone holding a valid link increments the access counter by exactly one
+        || (resource.data.revoked == false && resource.data.expiresAt > request.time
+            && changed().hasOnly(['accesses', 'lastAccessAt'])
+            && d().accesses == resource.data.accesses + 1
+            && d().lastAccessAt == request.time);
+      allow delete: if false;
+    }
+
+    // ================= organizations =================
+    match /organizations/{org} {
+      function validOrgFields() {
+        return txt(d().name, 200) && str(d().address, 400) && str(d().registrationId, 100)
+          && txt(d().region, 200) && d().units in ['C', 'F'] && txt(d().timezone, 100)
+          && d().onboardingStep is int && d().onboardingStep >= 0 && d().onboardingStep <= 10
+          && d().onboarding is map && d().onboarding.size() <= 40;
+      }
+      allow get: if active(org) || admin();
+      allow list: if admin();
+      allow create: if verified()
+        // Trial end is derived by clients as createdAt + 14 days (not stored).
+        && d().keys().hasOnly(['id', 'name', 'address', 'registrationId', 'region', 'units', 'timezone', 'onboardingStep', 'onboarding', 'plan', 'ownerId', 'createdAt'])
+        && d().id == org
+        && d().ownerId == request.auth.uid
+        && d().plan == 'Free'
+        && d().createdAt == request.time
+        && validOrgFields()
+        && getAfter(memberPath(org, request.auth.uid)).data.role == 'Owner';
+      // plan/trial/owner are not client-editable (plan comes from RevenueCat).
+      allow update: if owner(org) && validOrgFields()
+        && changed().hasOnly(['name', 'address', 'registrationId', 'region', 'units', 'timezone', 'onboardingStep', 'onboarding', 'deletionRequestedAt'])
+        && (!('deletionRequestedAt' in changed()) || d().deletionRequestedAt == request.time);
+      allow delete: if false;
+
+      // ---------- memberships (doc ID = Firebase Auth uid) ----------
+      match /memberships/{uid} {
+        function validMember(m) {
+          return m.keys().hasOnly(['id', 'organizationId', 'userId', 'name', 'email', 'role', 'siteIds', 'status', 'lastActive'])
+            && m.id == uid && m.userId == uid && m.organizationId == org
+            && txt(m.name, 200) && str(m.email, 320)
+            && m.role in ['Owner', 'Manager', 'Staff']
+            && m.siteIds is list && m.siteIds.size() <= 100
+            && m.status in ['Active', 'Inactive']
+            && str(m.lastActive, 40);
+        }
+        function acceptingInvite() {
+          let inv = get(invitePath(org, myEmail())).data;
+          return inv.status == 'Invited'
+            && d().role == inv.role && d().siteIds == inv.siteIds && d().email == myEmail()
+            && getAfter(invitePath(org, myEmail())).data.status == 'Accepted';
+        }
+        allow read: if (signedIn() && request.auth.uid == uid) || manager(org);
+        allow create: if verified() && request.auth.uid == uid && validMember(d()) && d().status == 'Active'
+          && ((bootstrapping(org) && d().role == 'Owner' && d().email == myEmail())
+              || (d().role in ['Manager', 'Staff'] && acceptingInvite()));
+        allow update: if validMember(d()) && (
+          (request.auth.uid == uid && active(org) && changed().hasOnly(['name', 'lastActive']))
+          || (owner(org) && resource.data.role != 'Owner' && d().role in ['Manager', 'Staff']
+              && changed().hasOnly(['role', 'status', 'siteIds', 'name']))
+          || (manager(org) && resource.data.role == 'Staff' && d().role == 'Staff'
+              && changed().hasOnly(['status', 'siteIds'])));
+        allow delete: if false;
+      }
+
+      // ---------- invitations (doc ID = lower-cased email) ----------
+      match /invitations/{email} {
+        function validInvite() {
+          return d().keys().hasOnly(['id', 'organizationId', 'email', 'name', 'role', 'siteIds', 'status', 'invitedBy', 'createdAt', 'acceptedBy'])
+            && d().id == email && d().email == email && d().organizationId == org
+            && txt(d().name, 200) && d().role in ['Manager', 'Staff']
+            && d().siteIds is list && d().siteIds.size() > 0 && d().siteIds.size() <= 100;
+        }
+        function inviter() { return owner(org) || (manager(org) && d().role == 'Staff'); }
+        allow read: if manager(org) || (verified() && myEmail() == email);
+        allow create: if validInvite() && inviter() && d().status == 'Invited'
+          && d().invitedBy == request.auth.uid && d().createdAt == request.time;
+        allow update: if validInvite() && (
+          // revoke a pending invite
+          (inviter() && resource.data.status == 'Invited' && d().status == 'Revoked' && changed().hasOnly(['status']))
+          // re-invite after a revoke
+          || (inviter() && resource.data.status == 'Revoked' && d().status == 'Invited'
+              && d().invitedBy == request.auth.uid && d().createdAt == request.time)
+          // the invitee accepts (same batch creates their membership + users doc)
+          || (verified() && myEmail() == email && resource.data.status == 'Invited'
+              && d().status == 'Accepted' && d().acceptedBy == request.auth.uid
+              && changed().hasOnly(['status', 'acceptedBy'])
+              && getAfter(memberPath(org, request.auth.uid)).data.status == 'Active'));
+        allow delete: if false;
+      }
+
+      // ---------- sites ----------
+      match /sites/{id} {
+        allow read: if active(org);
+        allow create, update: if (owner(org) || bootstrapping(org)) && tenant(org, id)
+          && d().keys().hasOnly(['id', 'organizationId', 'name', 'address'])
+          && txt(d().name, 200) && str(d().address, 400);
+        allow delete: if false;
+      }
+
+      // ---------- equipment ----------
+      match /equipment/{id} {
+        function validEquipment() {
+          return tenant(org, id)
+            && d().keys().hasOnly(['id', 'organizationId', 'name', 'type', 'location', 'siteId', 'min', 'max', 'frequency', 'archived'])
+            && txt(d().name, 200) && txt(d().type, 50) && str(d().location, 200) && txt(d().frequency, 200)
+            && d().min is number && d().max is number && d().min >= -100 && d().max <= 300 && d().min < d().max
+            && d().archived is bool
+            && exists(docPath(org, 'sites', d().siteId));
+        }
+        allow read: if active(org);
+        allow create: if manager(org) && validEquipment() && d().archived == false;
+        // Safe-range changes are Owner-only (audited "limits.update").
+        allow update: if manager(org) && validEquipment()
+          && changed().hasOnly(['name', 'type', 'location', 'frequency', 'archived', 'min', 'max'])
+          && (!changed().hasAny(['min', 'max']) || owner(org));
+        allow delete: if false;
+      }
+
+      // ---------- entries (immutable originals) ----------
+      match /entries/{id} {
+        function equipmentOk() {
+          let eq = get(docPath(org, 'equipment', d().equipmentId)).data;
+          return eq.siteId == d().siteId && eq.archived == false
+            && (d().type != 'Temperature'
+                || ((d().numericValue < eq.min || d().numericValue > eq.max)
+                      ? d().status == 'Out of range'
+                      : d().status in ['Done', 'Failed']));
+        }
+        function issueOk() {
+          return d().status == 'Done'
+            ? d().issueId == null
+            : (d().issueId is string
+               && getAfter(docPath(org, 'issues', d().issueId)).data.sourceEntryId == id);
+        }
+        allow read: if atSite(org, resource.data.siteId);
+        allow create: if active(org) && atSite(org, d().siteId) && tenant(org, id)
+          && d().keys().hasOnly(['id', 'organizationId', 'siteId', 'equipmentId', 'templateVersionId', 'supplierId', 'dueItemId', 'type', 'label', 'value', 'numericValue', 'status', 'staff', 'actorId', 'serverTimestamp', 'deviceTimestamp', 'notes', 'amendments', 'attachmentIds', 'issueId'])
+          && d().type in ['Temperature', 'Checklist', 'Delivery', 'Cleaning', 'Corrective action']
+          && d().status in ['Done', 'Out of range', 'Failed', 'Rejected']
+          && d().actorId == request.auth.uid
+          && d().serverTimestamp == request.time
+          && txt(d().deviceTimestamp, 40)
+          && txt(d().label, 200) && txt(d().value, 200) && txt(d().staff, 200) && str(d().notes, 2000)
+          && str(d().equipmentId, 100) && str(d().templateVersionId, 100) && str(d().supplierId, 100) && str(d().dueItemId, 100)
+          && d().amendments == [] && d().attachmentIds == []
+          && (d().type == 'Temperature' ? d().numericValue is number : d().numericValue == null)
+          && (d().type != 'Temperature' || d().equipmentId != '')
+          && (d().equipmentId == '' || equipmentOk())
+          && (d().status in ['Done', 'Out of range'] || d().notes.size() >= 3)
+          && issueOk();
+        // Only append-only, reasoned amendments by Owner/Manager. Originals never change.
+        allow update: if manager(org)
+          && changed().hasOnly(['amendments'])
+          && d().amendments.size() == resource.data.amendments.size() + 1
+          && d().amendments[0:resource.data.amendments.size()] == resource.data.amendments
+          && d().amendments[resource.data.amendments.size()].keys().hasOnly(['id', 'actor', 'actorId', 'at', 'reason', 'value'])
+          && d().amendments[resource.data.amendments.size()].actorId == request.auth.uid
+          && txt(d().amendments[resource.data.amendments.size()].value, 200)
+          && d().amendments[resource.data.amendments.size()].reason.size() >= 3;
+        allow delete: if false;
+      }
+
+      // ---------- issues / corrective actions ----------
+      match /issues/{id} {
+        function validTimelineItem(t, status) {
+          return t.keys().hasOnly(['at', 'actor', 'actorId', 'note', 'status'])
+            && t.status == status && t.actorId == request.auth.uid
+            && t.note is string && t.note.size() >= 3 && t.note.size() <= 2000;
+        }
+        function nextOk(cur, next) {
+          return (cur == 'Open' && next in ['In Progress', 'Resolved'])
+            || (cur == 'In Progress' && next == 'Resolved')
+            || (cur == 'Resolved' && next == 'Verified' && manager(org));
+        }
+        allow read: if atSite(org, resource.data.siteId);
+        allow create: if active(org) && atSite(org, d().siteId) && tenant(org, id)
+          && d().keys().hasOnly(['id', 'organizationId', 'title', 'severity', 'sourceEntryId', 'equipmentId', 'siteId', 'assignee', 'dueAt', 'createdAt', 'status', 'timeline'])
+          && txt(d().title, 300) && d().severity in ['Low', 'Medium', 'High']
+          && str(d().assignee, 200) && str(d().dueAt, 40)
+          && d().status == 'Open' && d().createdAt == request.time
+          && d().timeline.size() == 1 && validTimelineItem(d().timeline[0], 'Open')
+          // Managers open issues manually; anyone may open the issue for their own failed entry.
+          && (manager(org)
+              || (d().sourceEntryId != ''
+                  && getAfter(docPath(org, 'entries', d().sourceEntryId)).data.issueId == id
+                  && getAfter(docPath(org, 'entries', d().sourceEntryId)).data.actorId == request.auth.uid));
+        // Staff may record corrective action and resolve at their sites; verification is Manager+.
+        allow update: if atSite(org, resource.data.siteId)
+          && changed().hasOnly(['status', 'timeline'])
+          && nextOk(resource.data.status, d().status)
+          && d().timeline.size() == resource.data.timeline.size() + 1
+          && d().timeline[0:resource.data.timeline.size()] == resource.data.timeline
+          && validTimelineItem(d().timeline[resource.data.timeline.size()], d().status);
+        allow delete: if false;
+      }
+
+      // ---------- templates (current pointer) & immutable versions ----------
+      match /templates/{id} {
+        allow read: if active(org);
+        allow create, update: if manager(org) && tenant(org, id)
+          && d().keys().hasOnly(['id', 'organizationId', 'name', 'category', 'currentVersionId', 'archived'])
+          && txt(d().name, 200) && txt(d().category, 200) && d().archived is bool
+          && existsAfter(docPath(org, 'templateVersions', d().currentVersionId));
+        allow delete: if false;
+      }
+      match /templateVersions/{id} {
+        allow read: if active(org);
+        allow create: if manager(org) && tenant(org, id)
+          && d().keys().hasOnly(['id', 'organizationId', 'templateId', 'version', 'name', 'category', 'tasks', 'createdAt'])
+          && d().version is int && d().version >= 1
+          && txt(d().name, 200) && txt(d().category, 200)
+          && d().tasks is list && d().tasks.size() >= 1 && d().tasks.size() <= 50
+          && d().createdAt == request.time;
+        allow update, delete: if false;
+      }
+
+      // ---------- schedules & due items ----------
+      match /schedules/{id} {
+        allow read: if active(org);
+        allow create, update: if manager(org) && tenant(org, id)
+          && d().keys().hasOnly(['id', 'organizationId', 'templateId', 'siteId', 'cadence', 'time', 'assignedTo'])
+          && d().cadence in ['daily', 'per shift', 'weekly', 'monthly', 'custom']
+          && d().time.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$')
+          && txt(d().assignedTo, 200);
+        allow delete: if manager(org);
+      }
+      match /dueItems/{id} {
+        allow read: if atSite(org, resource.data.siteId);
+        allow create: if manager(org) && tenant(org, id)
+          && d().keys().hasOnly(['id', 'organizationId', 'title', 'siteId', 'equipmentId', 'templateVersionId', 'dueAt', 'assignedTo', 'status', 'completedAt'])
+          && txt(d().title, 200) && d().status in ['Due', 'Overdue', 'Skipped', 'N/A'];
+        // Anyone at the site completes a due check; Managers may also skip / mark N/A.
+        allow update: if atSite(org, resource.data.siteId)
+          && changed().hasOnly(['status', 'completedAt'])
+          && resource.data.status in ['Due', 'Overdue']
+          && ((d().status == 'Done' && d().completedAt == request.time)
+              || (manager(org) && d().status in ['Skipped', 'N/A']));
+        allow delete: if false;
+      }
+
+      // ---------- suppliers ----------
+      match /suppliers/{id} {
+        allow read: if active(org);
+        allow create, update: if manager(org) && tenant(org, id)
+          && d().keys().hasOnly(['id', 'organizationId', 'name', 'email', 'phone', 'categories', 'notes'])
+          && txt(d().name, 200) && str(d().email, 320) && str(d().phone, 80)
+          && txt(d().categories, 200) && str(d().notes, 2000);
+        allow delete: if false;
+      }
+
+      // ---------- reports: metadata + immutable evidence snapshot ----------
+      match /reports/{id} {
+        allow read: if manager(org);
+        allow create: if manager(org) && tenant(org, id)
+          && d().keys().hasOnly(['id', 'organizationId', 'name', 'start', 'end', 'siteIds', 'sections', 'generatedAt', 'generatedBy', 'generatedById', 'status', 'businessName', 'address', 'registrationId', 'watermarked', 'entryCount', 'issueCount'])
+          && d().generatedAt == request.time && d().generatedById == request.auth.uid
+          && d().status == 'Ready'
+          && existsAfter(docPath(org, 'reportSnapshots', id));
+        allow update, delete: if false;
+      }
+      match /reportSnapshots/{id} {
+        allow read: if manager(org);
+        allow create: if manager(org) && tenant(org, id)
+          && d().keys().hasOnly(['id', 'organizationId', 'entries', 'issues'])
+          && d().entries is list && d().issues is list
+          && getAfter(docPath(org, 'reports', id)).data.generatedById == request.auth.uid;
+        allow update, delete: if false;
+      }
+
+      // ---------- notifications ----------
+      match /notifications/{id} {
+        allow read: if active(org);
+        allow create: if active(org) && tenant(org, id)
+          && d().keys().hasOnly(['id', 'organizationId', 'title', 'body', 'type', 'createdAt', 'readBy', 'href'])
+          && txt(d().title, 300) && str(d().body, 2000) && txt(d().type, 100) && str(d().href, 200)
+          && d().createdAt == request.time && d().readBy == [];
+        allow update: if active(org) && changed().hasOnly(['readBy'])
+          && d().readBy.toSet() == resource.data.readBy.toSet().union([request.auth.uid].toSet());
+        allow delete: if false;
+      }
+      match /notificationPreferences/{uid} {
+        allow read: if active(org) && request.auth.uid == uid;
+        allow create, update: if active(org) && request.auth.uid == uid && tenant(org, uid)
+          && d().keys().hasOnly(['id', 'organizationId', 'userId', 'email', 'push', 'quietStart', 'quietEnd'])
+          && d().userId == uid && d().email is bool && d().push is bool
+          && d().quietStart.matches('^[0-9]{2}:[0-9]{2}$') && d().quietEnd.matches('^[0-9]{2}:[0-9]{2}$');
+        allow delete: if false;
+      }
+
+      // ---------- append-only audit log ----------
+      match /auditEvents/{id} {
+        allow read: if manager(org);
+        allow create: if active(org) && tenant(org, id)
+          && d().keys().hasOnly(['id', 'organizationId', 'actor', 'actorId', 'at', 'action', 'entity', 'oldValue', 'newValue', 'metadata'])
+          && d().actorId == request.auth.uid && d().at == request.time
+          && txt(d().action, 100) && str(d().entity, 200)
+          && str(d().oldValue, 20000) && str(d().newValue, 20000) && d().metadata is map;
+        allow update, delete: if false;
+      }
+    }
+  }
 }

@@ -17,8 +17,11 @@ export interface Organization {
   timezone: string;
   onboardingStep: number;
   onboarding: Record<string, string>;
-  demo: boolean;
+  ownerId: string;
+  createdAt: string;
+  /** Stored as "Free"; the client overlays the RevenueCat entitlement. */
   plan: "Free" | "Pro" | "Group";
+  /** Derived on read: createdAt + 14 days (not stored). */
   trialEndsAt: string;
   deletionRequestedAt?: string;
 }
@@ -32,8 +35,19 @@ export interface Membership extends TenantRecord {
   email: string;
   role: Role;
   siteIds: string[];
-  status: "Active" | "Invited" | "Inactive";
+  status: "Active" | "Inactive";
   lastActive: string;
+}
+/** Doc ID is the lower-cased email. No email is sent: the invitee signs up with it. */
+export interface Invitation extends TenantRecord {
+  email: string;
+  name: string;
+  role: "Manager" | "Staff";
+  siteIds: string[];
+  status: "Invited" | "Revoked" | "Accepted";
+  invitedBy: string;
+  createdAt: string;
+  acceptedBy?: string;
 }
 export interface Equipment extends TenantRecord {
   name: string;
@@ -48,6 +62,7 @@ export interface Equipment extends TenantRecord {
 export interface Amendment {
   id: string;
   actor: string;
+  actorId: string;
   at: string;
   reason: string;
   value: string;
@@ -57,6 +72,7 @@ export interface Entry extends TenantRecord {
   equipmentId: string;
   templateVersionId: string;
   supplierId: string;
+  dueItemId: string;
   type: EntryType;
   label: string;
   value: string;
@@ -66,6 +82,7 @@ export interface Entry extends TenantRecord {
   actorId: string;
   serverTimestamp: string;
   deviceTimestamp: string;
+  /** Derived on read: |server - device| > 5 minutes (not stored). */
   timingFlag: boolean;
   notes: string;
   amendments: Amendment[];
@@ -82,7 +99,13 @@ export interface Issue extends TenantRecord {
   dueAt: string;
   createdAt: string;
   status: IssueStatus;
-  timeline: { at: string; actor: string; note: string; status: IssueStatus }[];
+  timeline: {
+    at: string;
+    actor: string;
+    actorId: string;
+    note: string;
+    status: IssueStatus;
+  }[];
 }
 export interface Task {
   id: string;
@@ -144,17 +167,22 @@ export interface Report extends TenantRecord {
   sections: string[];
   generatedAt: string;
   generatedBy: string;
+  generatedById: string;
   status: "Ready";
   businessName: string;
   address: string;
   registrationId: string;
+  watermarked: boolean;
+  entryCount: number;
+  issueCount: number;
+  /** Loaded from reportSnapshots/{id} only when needed (PDF, sharing). */
   entries: Entry[];
   issues: Issue[];
-  watermarked: boolean;
 }
+/** sharedReports/{token}: the doc ID is the secret inspector token. */
 export interface ShareLink extends TenantRecord {
   reportId: string;
-  tokenHash: string;
+  createdAt: string;
   expiresAt: string;
   revoked: boolean;
   accesses: number;
@@ -170,6 +198,7 @@ export interface Notification extends TenantRecord {
 }
 export interface AuditEvent extends TenantRecord {
   actor: string;
+  actorId: string;
   at: string;
   action: string;
   entity: string;
@@ -183,13 +212,6 @@ export interface Attachment extends TenantRecord {
   contentType: string;
   size: number;
 }
-export interface Subscription extends TenantRecord {
-  customerId: string;
-  subscriptionId: string;
-  status: string;
-  plan: "Free" | "Pro" | "Group";
-  lastEventAt: number;
-}
 export interface NotificationPreference extends TenantRecord {
   userId: string;
   email: boolean;
@@ -201,6 +223,7 @@ export interface State {
   organization: Organization;
   sites: Site[];
   memberships: Membership[];
+  invitations: Invitation[];
   equipment: Equipment[];
   entries: Entry[];
   issues: Issue[];
@@ -213,7 +236,6 @@ export interface State {
   shareLinks: ShareLink[];
   notifications: Notification[];
   auditEvents: AuditEvent[];
-  subscriptions: Subscription[];
   notificationPreferences: NotificationPreference[];
 }
 export type Collection = Exclude<keyof State, "organization">;
@@ -221,7 +243,7 @@ export interface Actor {
   uid: string;
   organizationId: string;
   name: string;
+  email: string;
   role: Role;
-  demo: boolean;
   admin: boolean;
 }

@@ -98,8 +98,8 @@ const content: Record<
       "This preview stores business details, team information and operational records in the configured backend.",
     sections: [
       [
-        "Local demonstration",
-        "Demo workspaces contain synthetic data and use a signed session cookie. Local demo records are stored on the server until removed by its operator.",
+        "Where your records live",
+        "Records are stored in Google Cloud Firestore under your business's workspace. Access is limited to signed-in, verified members of that business by security rules. Subscriptions are processed by RevenueCat.",
       ],
       [
         "Production data",
@@ -112,6 +112,10 @@ const content: Record<
     ],
   },
 };
+export const dynamicParams = false;
+export function generateStaticParams() {
+  return [...Object.keys(content), "pricing"].map((page) => ({ page }));
+}
 export async function generateMetadata({
   params,
 }: {
